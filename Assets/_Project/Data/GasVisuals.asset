@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 029ac6ed6c4dd9c4e9ff979085194db4, type: 3}
+  m_Name: GasVisuals
+  m_EditorClassIdentifier: Orbital::Orbital.Galaxy.BodyTypeVisuals
+  TypeName: Gas
+  SpriteVariants:
+  - {fileID: 21300000, guid: a1c8a5794a145f342b655e0aabe0426c, type: 3}
+  - {fileID: 21300000, guid: a4b5a2f34021ec34eb8f91580ea4007a, type: 3}
+  - {fileID: 21300000, guid: 9679d1fa659b8884395daf078de67996, type: 3}
+  RotationSpeedDegreesPerSecond: 4
+  VisualScaleMultiplier: 1.5

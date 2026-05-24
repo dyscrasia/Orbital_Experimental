@@ -1,0 +1,21 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 029ac6ed6c4dd9c4e9ff979085194db4, type: 3}
+  m_Name: RockyVisuals
+  m_EditorClassIdentifier: Orbital::Orbital.Galaxy.BodyTypeVisuals
+  TypeName: Rocky
+  SpriteVariants:
+  - {fileID: 21300000, guid: 1a410015b428d4d44af5db1975ad215e, type: 3}
+  - {fileID: 21300000, guid: 45ceaeee8fd069e41b0983795c4bf317, type: 3}
+  - {fileID: 21300000, guid: 348b4027b035867439d2d1a77e484177, type: 3}
+  RotationSpeedDegreesPerSecond: 8
+  VisualScaleMultiplier: 1.5
