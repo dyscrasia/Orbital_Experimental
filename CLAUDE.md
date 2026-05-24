@@ -1,8 +1,9 @@
-# Orbital - Project Context for Claude Code
+# Orbital (Strategy variant) - Project Context for Claude Code
 
 ## What this is
-Orbital is a 2D turn-based tactical-strategy game in a procedurally
-generated galaxy. Two empires (player + AI or human) compete to
+This project is the **Strategy variant** of Orbital, forked from the playable
+Classic build. Orbital is a 2D turn-based tactical-strategy game in a
+procedurally generated galaxy. Two empires (player + AI or human) compete to
 colonize a galaxy and conquer each other's home planet via real-time
 gravity-shot rocket launches resolved between turns.
 
@@ -11,16 +12,26 @@ of firing each rocket - a real-time skill shot that pinballs through
 the gravitational fields of intervening planets. Failed shots crash
 and deposit cargo on whichever planet ate the rocket.
 
+The Strategy variant adds builder depth on top of the Classic core:
+per-planet production, a meaningful resource economy, tech progression,
+and structures/rocket types that the player chooses how to invest in.
+Classic's "1 + floor(captures/2) rockets per turn" rule is replaced by
+production driven by what the player has built and stockpiled.
+
 ## Game variants — scope guard
 
 Orbital will eventually ship as three variants:
-- **Classic** — simple, beautiful, minimal rules. Currently under development.
-- **Arcade** — additional fun/chaos rules (e.g. rocket splitting, boost pads, black holes).
+- **Classic** — simple, beautiful, minimal rules. Already playable in the
+  sibling `Orbital` project; do NOT port Strategy mechanics back to it.
+- **Arcade** — additional fun/chaos rules (e.g. rocket splitting, boost pads,
+  black holes). Out of scope here.
 - **Strategy** — builder elements, resource economy, tech trees, more depth.
+  **This is what we are building.**
 
-We are currently building the **Classic** variant only. Do not propose or
-implement mechanics that belong in Arcade or Strategy. When in doubt about
-scope, ask before building.
+Mechanics that belong in Arcade are still out of scope. When a proposed change
+could reasonably belong to either Classic or Strategy, default to keeping the
+Classic-equivalent path working (so we don't regress the playable baseline)
+and add Strategy behavior on top via configuration or new systems.
 
 ## Engine and target
 - Unity 6 LTS, URP 2D Renderer (or Unity 2022 LTS if 6 not available)
@@ -102,23 +113,28 @@ Tunables on `AimController`: `PositioningThreshold` (default 3 world units,
 how far past the surface before switching modes) and `RocketSurfaceOffset`
 (default 0.7, gap between surface and rocket sprite).
 
-## Classic rocket production rule
+## Rocket production (Strategy variant — replaces Classic rule)
 
-At the start of each player's turn (when Space is pressed to enter WaitingForLaunch):
+The Classic rule (`rockets = 1 + floor(nonHomeCapturedPlanets / 2)`) is the
+baseline that ships in `LaunchSiteCalculator` today. In the Strategy variant
+this is being **replaced** by production driven by per-planet build queues and
+the empire stockpile. The replacement should preserve the same external API
+shape (a list of launch sites for the current turn) so `LaunchSiteView` and the
+turn flow keep working.
 
-  **rockets = 1 + floor(nonHomeCapturedPlanets / 2)**
+Design direction (not yet implemented — surface questions before coding):
+- Each captured planet has a small set of build slots. Slots produce rockets
+  (and later, structures) over multiple turns, paid for from the shared empire
+  stockpile.
+- Home planet retains a guaranteed baseline production so a player can never
+  be completely locked out of firing.
+- Bonus rockets from captures are removed; rocket count per turn is whatever
+  the player's production has actually completed.
 
-- The home planet always provides exactly 1 rocket.
-- Every 2 non-home captured planets grant 1 additional bonus rocket.
-- Bonus rockets are placed on randomly selected captured non-home planets
-  (without replacement). Selection is seeded deterministically:
-  `seed = TurnNumber * 31 + CurrentPlayerId` so the same game state
-  always produces the same placements.
-- After each rocket resolves the player may fire the next one. Pressing
-  Enter (or the End Turn button) forfeits remaining rockets.
-
-`LaunchSiteCalculator` (pure static, no Unity deps) implements this rule.
-`LaunchSiteView` is the visual marker (distinct from `OrbitingRocketView`).
+`LaunchSiteCalculator` and `LaunchSiteView` stay as the seam between
+production logic and presentation. New systems (build queue, production
+tick) live under `Scripts/Strategy/` and are pure data + deterministic from
+the turn sequence, same architectural rules as the rest of the game.
 
 ## Planet visualization
 `CelestialBodyView` supports per-type sprite animations via `BodyTypeVisuals`
@@ -142,10 +158,21 @@ Currently only **Rocky** planets will have sprites filled in. Ice, Lava, Gas, an
 Water body types retain the colored circle until their sprite sets are added.
 
 ## Economy model
-Single shared empire stockpile of ~5 resources (Metals, Water, O2,
-Energy, Rare). Per-planet resource logistics are NOT modeled day to
-day. New colonies have a one-time bootstrap cost paid by the
-colonization rocket's payload.
+Shared empire stockpile of ~5 resources (Metals, Water, O2, Energy, Rare),
+inherited from the Classic baseline.
+
+In the Strategy variant the economy is **active**, not flavor: resources are
+spent on production, structures, and tech. Each captured planet contributes
+to the stockpile based on its body type (e.g. Lava → Metals, Ice → Water,
+Gas → Energy, etc.) and any structures built on it. New colonies still pay a
+one-time bootstrap cost from the colonization rocket's payload.
+
+Per-planet stockpiles are still NOT modeled — only the shared empire pool.
+What planets do have is build queues and (eventually) structures, both of
+which read from and write to the shared stockpile.
+
+Specific yields, build costs, and tech costs are TBD and should be defined in
+ScriptableObjects under `Assets/_Project/Data/` before being referenced in code.
 
 ## Testing
 - Unit tests for pure-data systems (galaxy gen, physics, economy)
@@ -161,8 +188,11 @@ colonization rocket's payload.
 - Keep changes scoped - don't refactor unrelated code unless asked
 
 ## Things this project does NOT do (do not propose them)
-- Multi-resource per-planet logistics (we use a shared empire stockpile)
+- Per-planet resource stockpiles (we use one shared empire stockpile;
+  planets have build queues and structures, but resources pool globally)
 - Patched-conics single-body gravity (we use full multi-body summation)
 - 3D rendering (it's 2D, even though Blender is in the asset pipeline)
 - Real-time strategic layer (turn-based only; only shot resolution
   is real-time)
+- Arcade-variant mechanics (rocket splitting, boost pads, black holes,
+  random event cards) — those belong in a different fork

@@ -34,6 +34,11 @@ namespace Orbital.Physics
         public float OrbitAngularSpeed;   // radians per second (= circularSpeed / radius)
         public int OrbitDirection;        // +1 = CCW, -1 = CW
 
+        /// <summary>People loaded onto this rocket at launch. Set by TurnManager
+        /// just before HandleRocketLaunched runs. Has no effect on physics; consumed
+        /// by the resolution step in a later jump.</summary>
+        public int PassengerCount;
+
         public RocketState Clone() => new RocketState
         {
             Position = Position,
@@ -47,7 +52,8 @@ namespace Orbital.Physics
             OrbitRadius = OrbitRadius,
             OrbitAngle = OrbitAngle,
             OrbitAngularSpeed = OrbitAngularSpeed,
-            OrbitDirection = OrbitDirection
+            OrbitDirection = OrbitDirection,
+            PassengerCount = PassengerCount
         };
     }
 }

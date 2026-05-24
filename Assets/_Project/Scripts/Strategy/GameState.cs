@@ -32,6 +32,23 @@ namespace Orbital.Strategy
         /// <summary>The body ID of the currently selected launch site.</summary>
         public int ActiveLaunchSiteId { get; set; } = -1;
 
+        /// <summary>People resident on each owned planet, keyed by body ID. Each owned
+        /// planet (home or captured) has an entry once it is in Ownership. Removed
+        /// entries imply zero population; absent entries imply the planet is not
+        /// owned and therefore has no civilian population to draw from.</summary>
+        public Dictionary<int, int> Population { get; } = new Dictionary<int, int>();
+
+        /// <summary>In-progress colonisations keyed by body ID. A planet may appear
+        /// in Colonisations XOR Ownership (never both — completion moves it).</summary>
+        public Dictionary<int, Colonisation> Colonisations { get; }
+            = new Dictionary<int, Colonisation>();
+
+        /// <summary>Active contests keyed by body ID. A contested planet simultaneously
+        /// has an Ownership or Colonisation entry (defender side) and an entry here
+        /// (invader side). Removed when the contest resolves.</summary>
+        public Dictionary<int, Contest> Contests { get; }
+            = new Dictionary<int, Contest>();
+
         public GameState(IReadOnlyList<Player> players)
         {
             Players = players;

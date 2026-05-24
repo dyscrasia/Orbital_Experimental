@@ -12,8 +12,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7f9f4f3ad5aeeb74784e1ff0c28a4648, type: 3}
   m_Name: DefaultGalaxyParameters
   m_EditorClassIdentifier: Orbital::Orbital.Galaxy.GalaxyParameters
-  MinBodies: 15
-  MaxBodies: 25
+  MinBodies: 10
+  MaxBodies: 12
   MinClusters: 3
   MaxClusters: 5
   MinBodiesPerCluster: 3

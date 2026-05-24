@@ -14,18 +14,13 @@ namespace Orbital.Combat
         public static int? CheckForWin(GameState state)
         {
             foreach (Player player in state.Players)
-            {
                 foreach (Player other in state.Players)
                 {
                     if (other.Id == player.Id) continue;
-
-                    if (state.Ownership.TryGetValue(other.HomeBodyId, out PlanetOwnership ownership)
-                        && ownership.OwnerPlayerId == player.Id)
-                    {
+                    if (state.Ownership.TryGetValue(other.HomeBodyId, out PlanetOwnership o)
+                        && o.OwnerPlayerId == player.Id)
                         return player.Id;
-                    }
                 }
-            }
             return null;
         }
     }

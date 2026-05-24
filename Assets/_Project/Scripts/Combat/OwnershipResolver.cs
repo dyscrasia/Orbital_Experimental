@@ -17,6 +17,8 @@ namespace Orbital.Combat
         /// <param name="firingPlayerId">The player who fired the rocket.</param>
         /// <param name="capturedBodyId">The body the rocket entered orbit of.</param>
         /// <param name="rocket">The rocket at the moment of capture (orbit params, future use).</param>
+        /// <remarks>No longer called in Jump 3+; ColonisationResolver handles orbital captures.</remarks>
+        [System.Obsolete("Replaced by ColonisationResolver.Resolve in Jump 3.")]
         public static OwnershipChange ResolveCapture(
             GameState state,
             int firingPlayerId,

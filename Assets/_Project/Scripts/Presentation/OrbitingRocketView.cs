@@ -18,6 +18,13 @@ namespace Orbital.Presentation
         private int _orbitDirection;
         private LineRenderer _shape;
 
+        // Read-only accessors used by TurnManager.ApplyColonisationCompletion
+        // to reconstruct PlanetOwnership when a colonisation finishes.
+        public float OrbitRadius       => _orbitRadius;
+        public float OrbitAngle        => _orbitAngle;
+        public float OrbitAngularSpeed => _orbitAngularSpeed;
+        public int   OrbitDirection    => _orbitDirection;
+
         public void Initialize(CelestialBody capturedBody, PlanetOwnership ownership, Color ownerColor)
         {
             _capturedBody       = capturedBody;

@@ -1,3 +1,7 @@
+// OwnershipResolver.ResolveCapture is obsolete since Jump 3 but its tests remain
+// as documentation of the method's behaviour. Suppress the warning here.
+#pragma warning disable CS0618
+
 using System.Collections.Generic;
 using NUnit.Framework;
 using Orbital.Combat;

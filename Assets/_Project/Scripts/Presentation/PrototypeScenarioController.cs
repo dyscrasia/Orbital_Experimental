@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Orbital.Galaxy;
 using Orbital.Physics;
+using Orbital.Strategy;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -77,6 +78,11 @@ namespace Orbital.Presentation
         [Tooltip("ScriptableObject with generator tunables. " +
                  "Create via Assets > Create > Orbital > Galaxy Parameters.")]
         public GalaxyParameters GalaxyParams;
+
+        [Header("Strategy")]
+        [Tooltip("ScriptableObject with Strategy-variant tunables. " +
+                 "Create via Assets > Create > Orbital > Strategy Parameters.")]
+        public StrategyParameters StrategyParams;
 
         [Tooltip("Seed used for the initial galaxy. GalaxyVisualizer can override this at runtime.")]
         public int InitialSeed = 12345;
@@ -244,6 +250,7 @@ namespace Orbital.Presentation
             GameObject tmGo = new GameObject("TurnManager");
             tmGo.transform.SetParent(transform, false);
             _turnManager = tmGo.AddComponent<TurnManager>();
+            _turnManager.StrategyParams = StrategyParams;
             _turnManager.Initialize(this);
 
             // Wire the aim controller into TurnManager so it only accepts input
@@ -349,6 +356,7 @@ namespace Orbital.Presentation
         {
             _homeBodyId = homeBodyId;
             BuildRocket();
+            _rocket.PassengerCount = 0;
             _rocketView.SetData(_rocket);
             System.Array.Clear(_wasInsideCaptureRing, 0, _wasInsideCaptureRing.Length);
             if (!_turnManagedMode) _outcomeDisplay.Hide();

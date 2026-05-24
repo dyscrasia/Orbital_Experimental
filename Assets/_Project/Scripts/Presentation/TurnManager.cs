@@ -4,6 +4,7 @@ using Orbital.Physics;
 using Orbital.Strategy;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 namespace Orbital.Presentation
 {
@@ -32,6 +33,18 @@ namespace Orbital.Presentation
     /// </summary>
     public class TurnManager : MonoBehaviour
     {
+        // -------------------------------------------------------------------------
+        //  Strategy parameters
+        // -------------------------------------------------------------------------
+
+        [Header("Strategy")]
+        [SerializeField] private StrategyParameters _strategyParams;
+        public StrategyParameters StrategyParams
+        {
+            get => _strategyParams;
+            set => _strategyParams = value;
+        }
+
         // -------------------------------------------------------------------------
         //  Player default colors
         // -------------------------------------------------------------------------
@@ -63,7 +76,15 @@ namespace Orbital.Presentation
         private readonly Dictionary<int, LaunchSiteView> _launchSiteViews
             = new Dictionary<int, LaunchSiteView>();
 
-        private int _nextRocketViewId;
+        private readonly Dictionary<int, PlanetPopulationView> _planetPopulationViews
+            = new Dictionary<int, PlanetPopulationView>();
+
+        private Canvas _popLabelCanvas;
+
+        private LoadingUI _loadingUI;
+        private RocketPassengerLabel _rocketPassengerLabel;
+
+
 
         // -------------------------------------------------------------------------
         //  Unity messages
@@ -80,6 +101,10 @@ namespace Orbital.Presentation
             GameObject winGo = new GameObject("WinScreenUI");
             _winScreen = winGo.AddComponent<WinScreenUI>();
             _winScreen.OnNewGame += NewGame;
+
+            GameObject loadGo = new GameObject("LoadingUI");
+            _loadingUI = loadGo.AddComponent<LoadingUI>();
+            _loadingUI.Hide();
         }
 
         // Start() intentionally omitted — PSC drives startup via Initialize().
@@ -189,6 +214,17 @@ namespace Orbital.Presentation
                 _launchSiteViews[siteId] = view;
             }
 
+            // Set each site's slider max to the planet's current population, reset to 0.
+            foreach (int siteId in _gameState.AvailableLaunchSites)
+            {
+                if (_launchSiteViews.TryGetValue(siteId, out LaunchSiteView v) && v != null)
+                {
+                    int pop = _gameState.Population.TryGetValue(siteId, out int p) ? p : 0;
+                    v.SetMax(pop);
+                    v.ResetLoad();
+                }
+            }
+
             // Default active site is home.
             SelectLaunchSite(current.HomeBodyId);
 
@@ -206,6 +242,7 @@ namespace Orbital.Presentation
             if (_gameState == null || _gameState.Phase != GamePhase.WaitingForLaunch) return;
             _gameState.AvailableLaunchSites.Clear();
             ClearLaunchSiteViews();
+            _loadingUI?.Hide();
             AdvanceToNextPlayer();
         }
 
@@ -214,6 +251,7 @@ namespace Orbital.Presentation
             _gameState.Phase    = GamePhase.GameOver;
             _gameState.WinnerId = winnerId;
             ClearLaunchSiteViews();
+            _loadingUI?.Hide();
             _winScreen.Show(_gameState.GetPlayer(winnerId));
             _turnUI.Show(_gameState);
         }
@@ -225,6 +263,23 @@ namespace Orbital.Presentation
         private void HandleRocketLaunched()
         {
             if (_gameState == null) return;
+
+            int siteId = _gameState.ActiveLaunchSiteId;
+
+            int load = 0;
+            if (_launchSiteViews.TryGetValue(siteId, out LaunchSiteView siteView) && siteView != null)
+                load = siteView.CurrentLoad;
+
+            int siteAvailable = _gameState.Population.TryGetValue(siteId, out int sitePop) ? sitePop : 0;
+            if (load > siteAvailable) load = siteAvailable;
+
+            _psc.Rocket.PassengerCount = load;
+            if (load > 0)
+                _gameState.Population[siteId] = siteAvailable - load;
+
+            _loadingUI?.Hide();
+            RefreshPlanetPopulationViews();
+
             _gameState.Phase = GamePhase.RocketInFlight;
             _turnUI.Show(_gameState);
         }
@@ -235,14 +290,19 @@ namespace Orbital.Presentation
 
             if (outcome == Outcome.Orbited && capturedBodyId >= 0)
             {
-                OwnershipChange change = OwnershipResolver.ResolveCapture(
-                    _gameState, _gameState.CurrentPlayerId, capturedBodyId, _psc.Rocket);
+                int passengers = _psc.Rocket.PassengerCount;
+                Player current = _gameState.CurrentPlayer;
 
-                if (change != null)
-                {
-                    ApplyOwnershipChange(change, capturedBodyId);
-                    RefreshOwnershipViews();
-                }
+                int baseDur  = _strategyParams != null ? _strategyParams.ColonisationBaseDuration : 20;
+                int minTurns = _strategyParams != null ? _strategyParams.MinColonisationTurns : 1;
+
+                ColonisationChange change = ColonisationResolver.Resolve(
+                    _gameState, current.Id, capturedBodyId, passengers, baseDur, minTurns);
+
+                ApplyColonisationChange(change);
+
+                // OrbitingRocketView is spawned at colonisation completion, not here.
+                RefreshPlanetPopulationViews();
             }
 
             int? winnerId = WinConditionChecker.CheckForWin(_gameState);
@@ -304,6 +364,12 @@ namespace Orbital.Presentation
             // Refresh highlights: active site gets white ring, others are dim.
             foreach (KeyValuePair<int, LaunchSiteView> kv in _launchSiteViews)
                 kv.Value.SetActive(kv.Key == bodyId);
+
+            // Per-site sliders are always visible via LaunchSiteView; shared LoadingUI stays hidden.
+            _loadingUI?.Hide();
+
+            // Re-initialize the in-flight label so it tracks the freshly prepared rocket.
+            _rocketPassengerLabel?.Initialize(_psc.Rocket, current.Color);
         }
 
         private void HandleSiteSelected(int bodyId)
@@ -335,8 +401,38 @@ namespace Orbital.Presentation
 
         private void AdvanceToNextPlayer()
         {
+            // 1. Tick colonisations (before player flip).
+            List<ColonisationTicker.Completion> completions = ColonisationTicker.Tick(_gameState);
+            foreach (ColonisationTicker.Completion c in completions)
+                ApplyColonisationCompletion(c);
+
+            // 2. Tick contests.
+            int dmgDivisor = _strategyParams != null ? _strategyParams.ContestDamageDivisor : 5;
+            int minDmg     = _strategyParams != null ? _strategyParams.ContestMinDamage : 1;
+            List<ContestTicker.Result> contestResults = ContestTicker.Tick(_gameState, dmgDivisor, minDmg);
+            foreach (ContestTicker.Result r in contestResults)
+                ApplyContestResult(r);
+
+            // 3. Refresh views if anything changed.
+            if (completions.Count > 0 || contestResults.Count > 0)
+            {
+                RefreshOwnershipViews();
+                RefreshPlanetPopulationViews();
+            }
+
+            // 4. Win check (now active — enemy home can be captured via contest).
+            int? winnerId = WinConditionChecker.CheckForWin(_gameState);
+            if (winnerId.HasValue) { EndGame(winnerId.Value); return; }
+
+            // 5. Flip player and increment turn.
             _gameState.CurrentPlayerId = _gameState.CurrentPlayerId == 1 ? 2 : 1;
             _gameState.TurnNumber++;
+
+            // 6. Grow population on every planet the new current player owns.
+            GrowOwnedPlanetPopulations(_gameState.CurrentPlayerId);
+            RefreshPlanetPopulationViews();
+
+            _loadingUI?.Hide();
             _gameState.Phase = GamePhase.BetweenTurns;
             _turnUI.Show(_gameState);
         }
@@ -360,8 +456,7 @@ namespace Orbital.Presentation
             ClearLaunchSiteViews();
             ClearOrbitingRocketViews();
             ClearOwnershipViews();
-
-            _nextRocketViewId = 0;
+            ClearPlanetPopulationViews();
 
             int p1Home = _psc.CurrentGalaxy.Player1HomeId;
             int p2Home = _psc.CurrentGalaxy.Player2HomeId;
@@ -373,10 +468,17 @@ namespace Orbital.Presentation
             _gameState.TurnNumber      = 1;
             _gameState.CurrentPlayerId = p1.Id;
 
+            int start = _strategyParams != null ? _strategyParams.StartingPopulation : 0;
+            _gameState.Population.Clear();
+            _gameState.Population[p1Home] = start;
+            _gameState.Population[p2Home] = start;
+
             _gameState.Ownership[p1Home] = new PlanetOwnership
                 { OwnerPlayerId = p1.Id, OrbitingRocketId = -1 };
             _gameState.Ownership[p2Home] = new PlanetOwnership
                 { OwnerPlayerId = p2.Id, OrbitingRocketId = -1 };
+            _gameState.Colonisations.Clear();
+            _gameState.Contests.Clear();
 
             foreach (CelestialBody body in _psc.Bodies)
             {
@@ -387,6 +489,25 @@ namespace Orbital.Presentation
             }
             RefreshOwnershipViews();
 
+            // Create the shared canvas for population labels.
+            GameObject canvasGo = new GameObject("PopLabelCanvas");
+            Canvas popCanvas = canvasGo.AddComponent<Canvas>();
+            popCanvas.renderMode  = RenderMode.ScreenSpaceOverlay;
+            popCanvas.sortingOrder = 5;
+            canvasGo.AddComponent<CanvasScaler>();
+            _popLabelCanvas = popCanvas;
+
+            RefreshPlanetPopulationViews();
+
+            // Create the passenger label once; re-initialize each BeginGame to pick up
+            // the fresh rocket reference after galaxy regeneration.
+            if (_rocketPassengerLabel == null)
+            {
+                GameObject labelGo = new GameObject("RocketPassengerLabel");
+                _rocketPassengerLabel = labelGo.AddComponent<RocketPassengerLabel>();
+            }
+            _rocketPassengerLabel.Initialize(_psc.Rocket, Color.white);
+
             _psc.SetTurnManagedMode(true);
             _winScreen.Hide();
 
@@ -396,40 +517,128 @@ namespace Orbital.Presentation
         }
 
         // -------------------------------------------------------------------------
-        //  Private helpers — ownership
+        //  Private helpers — colonisation
         // -------------------------------------------------------------------------
 
-        private void ApplyOwnershipChange(OwnershipChange change, int capturedBodyId)
+        private void ApplyColonisationChange(ColonisationChange change)
         {
-            if (change.DislodgedExistingRocket
-                && _orbitingRockets.TryGetValue(capturedBodyId, out OrbitingRocketView old))
+            switch (change.Outcome)
             {
-                if (old != null) Destroy(old.gameObject);
-                _orbitingRockets.Remove(capturedBodyId);
-            }
+                case ColonisationOutcome.Started:
+                    _gameState.Colonisations[change.BodyId] = new Colonisation
+                    {
+                        PlayerId       = change.PlayerId,
+                        TurnsRemaining = change.NewTurnsRemaining
+                    };
+                    _gameState.Population[change.BodyId] = change.NewColonistCount;
+                    break;
 
-            RocketState rocket = _psc.Rocket;
-            int rocketViewId = _nextRocketViewId++;
-            _gameState.Ownership[capturedBodyId] = new PlanetOwnership
-            {
-                OwnerPlayerId     = change.NewOwnerId,
-                OrbitingRocketId  = rocketViewId,
-                OrbitRadius       = rocket.OrbitRadius,
-                OrbitAngle        = rocket.OrbitAngle,
-                OrbitAngularSpeed = rocket.OrbitAngularSpeed,
-                OrbitDirection    = rocket.OrbitDirection
-            };
+                case ColonisationOutcome.Reinforced:
+                    if (_gameState.Colonisations.TryGetValue(change.BodyId, out Colonisation col))
+                        col.TurnsRemaining = change.NewTurnsRemaining;
+                    _gameState.Population[change.BodyId] = change.NewColonistCount;
+                    break;
 
-            CelestialBody body = _psc.GetBodyById(capturedBodyId);
-            Player owner       = _gameState.GetPlayer(change.NewOwnerId);
-            if (body != null && owner != null)
-            {
-                GameObject go = new GameObject($"OrbitingRocket_{capturedBodyId}");
-                OrbitingRocketView view = go.AddComponent<OrbitingRocketView>();
-                view.Initialize(body, _gameState.Ownership[capturedBodyId], owner.Color);
-                _orbitingRockets[capturedBodyId] = view;
+                case ColonisationOutcome.ReinforceContest_Defender:
+                    _gameState.Population[change.BodyId] = change.NewColonistCount;
+                    break;
+
+                case ColonisationOutcome.ReinforceContest_Invader:
+                    if (_gameState.Contests.TryGetValue(change.BodyId, out Contest contest))
+                        contest.InvaderCount = change.NewColonistCount;
+                    break;
+
+                case ColonisationOutcome.StartContest:
+                    _gameState.Contests[change.BodyId] = new Contest
+                    {
+                        InvaderPlayerId = change.PlayerId,
+                        InvaderCount    = change.PassengersDeployed
+                    };
+                    break;
+
+                case ColonisationOutcome.Blocked:
+                case ColonisationOutcome.NoOp:
+                default:
+                    break;
             }
         }
+
+        /// <summary>
+        /// Called by AdvanceToNextPlayer after ColonisationTicker removes a completed
+        /// entry. Builds a PlanetOwnership using the stored orbit params from the
+        /// existing OrbitingRocketView (or sensible fallback defaults).
+        /// </summary>
+        private void ApplyColonisationCompletion(ColonisationTicker.Completion c)
+        {
+            PlanetOwnership ownership;
+
+            // In Jump 4 the OrbitingRocketView is no longer spawned during colonisation,
+            // so the TryGetValue branch is a safety fallback for any edge cases.
+            if (_orbitingRockets.TryGetValue(c.BodyId, out OrbitingRocketView existingView)
+                && existingView != null)
+            {
+                ownership = new PlanetOwnership
+                {
+                    OwnerPlayerId    = c.PlayerId,
+                    OrbitingRocketId = 0,
+                    OrbitRadius      = existingView.OrbitRadius,
+                    OrbitAngle       = existingView.OrbitAngle,
+                    OrbitAngularSpeed = existingView.OrbitAngularSpeed,
+                    OrbitDirection   = existingView.OrbitDirection
+                };
+            }
+            else
+            {
+                // No orbiting rocket view — generate fallback circular orbit params.
+                CelestialBody body = _psc.GetBodyById(c.BodyId);
+                float radius = body != null ? body.Radius * 2f : 2f;
+                float mass   = body != null ? body.Mass : 1f;
+                float speed  = Mathf.Sqrt(_psc.G * mass / radius);
+                ownership = new PlanetOwnership
+                {
+                    OwnerPlayerId    = c.PlayerId,
+                    OrbitingRocketId = 0,
+                    OrbitRadius      = radius,
+                    OrbitAngle       = 0f,
+                    OrbitAngularSpeed = speed / radius,
+                    OrbitDirection   = 1
+                };
+            }
+
+            _gameState.Ownership[c.BodyId] = ownership;
+            // Population[c.BodyId] already holds the correct count (set at Started/Reinforced).
+
+            Player owner = _gameState.GetPlayer(c.PlayerId);
+            Color ownerColor = owner?.Color ?? Color.white;
+            SpawnOrReplaceOrbitingRocketView(c.BodyId, ownership, ownerColor);
+            RefreshPlanetPopulationViews();
+        }
+
+        /// <summary>
+        /// Destroy any existing OrbitingRocketView on this body and spawn a new one
+        /// using the supplied orbit parameters. Only called at colonisation completion.
+        /// </summary>
+        private void SpawnOrReplaceOrbitingRocketView(int bodyId, PlanetOwnership orbitParams,
+                                                      Color playerColor)
+        {
+            if (_orbitingRockets.TryGetValue(bodyId, out OrbitingRocketView old) && old != null)
+            {
+                Destroy(old.gameObject);
+                _orbitingRockets.Remove(bodyId);
+            }
+
+            CelestialBody body = _psc.GetBodyById(bodyId);
+            if (body == null) return;
+
+            GameObject go = new GameObject($"OrbitingRocket_{bodyId}");
+            OrbitingRocketView view = go.AddComponent<OrbitingRocketView>();
+            view.Initialize(body, orbitParams, playerColor);
+            _orbitingRockets[bodyId] = view;
+        }
+
+        // -------------------------------------------------------------------------
+        //  Private helpers — ownership
+        // -------------------------------------------------------------------------
 
         private void RefreshOwnershipViews()
         {
@@ -454,6 +663,153 @@ namespace Orbital.Presentation
             foreach (PlanetOwnershipView v in _ownershipViews.Values)
                 if (v != null) Destroy(v.gameObject);
             _ownershipViews.Clear();
+        }
+
+        private void ClearPlanetPopulationViews()
+        {
+            foreach (PlanetPopulationView v in _planetPopulationViews.Values)
+                if (v != null) Destroy(v.gameObject);
+            _planetPopulationViews.Clear();
+
+            if (_popLabelCanvas != null)
+            {
+                Destroy(_popLabelCanvas.gameObject);
+                _popLabelCanvas = null;
+            }
+        }
+
+        private void RefreshPlanetPopulationViews()
+        {
+            if (_popLabelCanvas == null || _gameState == null) return;
+
+            // Create views for any body that has displayable state (owned, colonising, or contested).
+            HashSet<int> activeIds = CollectBodiesWithState();
+            foreach (int bodyId in activeIds)
+            {
+                if (_planetPopulationViews.ContainsKey(bodyId)) continue;
+
+                CelestialBody body = _psc.GetBodyById(bodyId);
+                if (body == null) continue;
+
+                GameObject go = new GameObject($"PlanetPopulationView_{bodyId}");
+                PlanetPopulationView view = go.AddComponent<PlanetPopulationView>();
+                view.Initialize(body, _popLabelCanvas, this);
+                _planetPopulationViews[bodyId] = view;
+            }
+
+            // Destroy views for bodies that no longer have any displayable state.
+            List<int> toRemove = new List<int>();
+            foreach (int bodyId in _planetPopulationViews.Keys)
+            {
+                if (!activeIds.Contains(bodyId))
+                    toRemove.Add(bodyId);
+            }
+            foreach (int bodyId in toRemove)
+            {
+                if (_planetPopulationViews.TryGetValue(bodyId, out PlanetPopulationView v) && v != null)
+                    Destroy(v.gameObject);
+                _planetPopulationViews.Remove(bodyId);
+            }
+        }
+
+        private HashSet<int> CollectBodiesWithState()
+        {
+            HashSet<int> ids = new HashSet<int>();
+            foreach (int id in _gameState.Ownership.Keys)     ids.Add(id);
+            foreach (int id in _gameState.Colonisations.Keys) ids.Add(id);
+            foreach (int id in _gameState.Contests.Keys)      ids.Add(id);
+            return ids;
+        }
+
+        private void ApplyContestResult(ContestTicker.Result r)
+        {
+            switch (r.Resolution)
+            {
+                case ContestTicker.Resolution.DefenderWins:
+                    // Population[bodyId] already updated by ContestTicker.
+                    // Ownership is unchanged. No view changes needed.
+                    break;
+
+                case ContestTicker.Resolution.InvaderWins:
+                {
+                    // Build new ownership for the invader using current orbit params (or fallback).
+                    PlanetOwnership ownership;
+                    if (_orbitingRockets.TryGetValue(r.BodyId, out OrbitingRocketView existingView)
+                        && existingView != null)
+                    {
+                        ownership = new PlanetOwnership
+                        {
+                            OwnerPlayerId    = r.InvaderPlayerId,
+                            OrbitingRocketId = 0,
+                            OrbitRadius      = existingView.OrbitRadius,
+                            OrbitAngle       = existingView.OrbitAngle,
+                            OrbitAngularSpeed = existingView.OrbitAngularSpeed,
+                            OrbitDirection   = existingView.OrbitDirection
+                        };
+                    }
+                    else
+                    {
+                        CelestialBody body = _psc.GetBodyById(r.BodyId);
+                        float radius = body != null ? body.Radius * 2f : 2f;
+                        float mass   = body != null ? body.Mass : 1f;
+                        float speed  = Mathf.Sqrt(_psc.G * mass / radius);
+                        ownership = new PlanetOwnership
+                        {
+                            OwnerPlayerId    = r.InvaderPlayerId,
+                            OrbitingRocketId = 0,
+                            OrbitRadius      = radius,
+                            OrbitAngle       = 0f,
+                            OrbitAngularSpeed = speed / radius,
+                            OrbitDirection   = 1
+                        };
+                    }
+
+                    _gameState.Ownership[r.BodyId]    = ownership;
+                    _gameState.Population[r.BodyId]   = r.FinalInvaderCount;
+                    _gameState.Colonisations.Remove(r.BodyId); // cancel any in-progress colonisation
+
+                    Player invader     = _gameState.GetPlayer(r.InvaderPlayerId);
+                    Color  invaderColor = invader?.Color ?? Color.white;
+                    SpawnOrReplaceOrbitingRocketView(r.BodyId, ownership, invaderColor);
+                    break;
+                }
+
+                case ContestTicker.Resolution.MutualAnnihilation:
+                {
+                    _gameState.Ownership.Remove(r.BodyId);
+                    _gameState.Colonisations.Remove(r.BodyId);
+                    _gameState.Population.Remove(r.BodyId);
+
+                    if (_orbitingRockets.TryGetValue(r.BodyId, out OrbitingRocketView view)
+                        && view != null)
+                    {
+                        Destroy(view.gameObject);
+                        _orbitingRockets.Remove(r.BodyId);
+                    }
+                    break;
+                }
+            }
+        }
+
+        private void GrowOwnedPlanetPopulations(int playerId)
+        {
+            if (_strategyParams == null) return;
+            int homeRate     = _strategyParams.PopulationGrowthPerTurn;
+            int divisor      = Mathf.Max(1, _strategyParams.CapturedPlanetGrowthDivisor);
+            int capturedRate = homeRate / divisor;
+
+            Player p = _gameState.GetPlayer(playerId);
+            if (p == null) return;
+
+            foreach (KeyValuePair<int, PlanetOwnership> kv in _gameState.Ownership)
+            {
+                if (kv.Value.OwnerPlayerId != playerId) continue;
+
+                bool isHome  = kv.Key == p.HomeBodyId;
+                int  amount  = isHome ? homeRate : capturedRate;
+                int existing = _gameState.Population.TryGetValue(kv.Key, out int v) ? v : 0;
+                _gameState.Population[kv.Key] = existing + amount;
+            }
         }
 
     }

@@ -1,61 +1,40 @@
 using System.Collections.Generic;
-using Orbital.Core;
 
 namespace Orbital.Strategy
 {
     /// <summary>
-    /// Pure static calculator for the Classic-mode rocket production rule:
-    ///   • 1 rocket at the active player's home planet (always)
-    ///   • floor(nonHomeCapturedPlanets / 2) bonus rockets, placed on randomly
-    ///     selected captured non-home planets (without replacement)
-    ///
-    /// The Rng is seeded from TurnNumber * 31 + CurrentPlayerId so that the same
-    /// game state always produces the same site list.
+    /// Pure static calculator for the Strategy-variant launch site rule:
+    ///   every planet the player owns is a launch site.
+    ///   Order: home first, then captured planets sorted by ascending body ID.
     /// </summary>
     public static class LaunchSiteCalculator
     {
-        /// <summary>
-        /// Returns the ordered list of body IDs the given player may launch from
-        /// this turn. Home is always index 0.
-        /// </summary>
+        /// <summary>Returns the body IDs the player may fire from this turn.
+        /// Strategy variant: every planet the player owns. Order: home first,
+        /// then captured planets ordered by ascending body ID for determinism.</summary>
         public static List<int> Calculate(GameState state, int playerId)
         {
-            Player player = state.GetPlayer(playerId);
-            if (player == null) return new List<int>();
+            Player p = state.GetPlayer(playerId);
+            List<int> sites = new List<int>();
+            if (p == null) return sites;
 
-            List<int> result = new List<int> { player.HomeBodyId };
+            // Home always first.
+            sites.Add(p.HomeBodyId);
 
-            List<int> nonHomeCaptured = GetNonHomeCaptured(state, playerId, player.HomeBodyId);
-            int bonusCount = nonHomeCaptured.Count / 2;
-
-            if (bonusCount > 0)
-            {
-                int seed = state.TurnNumber * 31 + playerId;
-                Rng rng = new Rng(seed);
-                rng.Shuffle(nonHomeCaptured);
-                for (int i = 0; i < bonusCount; i++)
-                    result.Add(nonHomeCaptured[i]);
-            }
-
-            return result;
-        }
-
-        /// <summary>
-        /// Returns the number of rockets a player would have given their non-home
-        /// captured planet count. Exposed for testing without needing a full GameState.
-        /// </summary>
-        public static int RocketCount(int nonHomeCapturedCount)
-            => 1 + nonHomeCapturedCount / 2;
-
-        private static List<int> GetNonHomeCaptured(GameState state, int playerId, int homeBodyId)
-        {
-            List<int> result = new List<int>();
+            // All other planets the player owns, sorted by ID for deterministic order.
+            List<int> captured = new List<int>();
             foreach (KeyValuePair<int, PlanetOwnership> kv in state.Ownership)
             {
-                if (kv.Value.OwnerPlayerId == playerId && kv.Key != homeBodyId)
-                    result.Add(kv.Key);
+                if (kv.Value.OwnerPlayerId == playerId && kv.Key != p.HomeBodyId)
+                    captured.Add(kv.Key);
             }
-            return result;
+            captured.Sort();
+            sites.AddRange(captured);
+
+            // Contested planets cannot fire rockets while the contest is unresolved.
+            sites.RemoveAll(id => state.Contests.ContainsKey(id));
+
+            return sites;
         }
     }
 }
